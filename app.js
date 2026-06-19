@@ -1920,7 +1920,7 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl) {
     const block = {
         id: blockId,
         start: time,
-        duration: 4, // Padrão: Veo gera vídeos de 4 segundos
+        duration: 5, // Padrão: Veo gera vídeos de 5 segundos
         mediaId: '',
         mediaName: `Gerando: "${word}"...`,
         generating: true
@@ -1945,7 +1945,7 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl) {
             ],
             parameters: {
                 aspectRatio: "16:9",
-                durationSeconds: 4
+                durationSeconds: 5
             }
         };
         // Vertex AI Veo é estritamente assíncrono (gera um Long Running Operation - LRO)
@@ -1954,7 +1954,7 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl) {
         // Formato padrão plano
         payload = {
             prompt: prompt,
-            duration: 4,
+            duration: 5,
             aspect_ratio: "16:9",
             timestamp: time,
             keyword: word
@@ -2029,7 +2029,7 @@ function finishFlowGeneration(blockId, videoUrl, keyword) {
         id: libraryId,
         name: `Veo_${keyword.replace(/\s+/g, '_')}.mp4`,
         url: videoUrl,
-        duration: 4
+        duration: 5
     };
     
     state.brolls.push(broll);
@@ -2060,17 +2060,14 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
     const flowUrl = localStorage.getItem('cfg_flow_url') || '';
     const isVertexAI = flowUrl.includes('aiplatform.googleapis.com');
     let pollingUrl = '';
+    let pollingMethod = 'GET';
+    let pollingBody = null;
 
     if (isVertexAI) {
-        // No Vertex AI, consultamos a operação inteira. Extraímos a chave do endpoint original
-        let apiKey = '';
-        try {
-            const urlObj = new URL(flowUrl);
-            apiKey = urlObj.searchParams.get('key') || '';
-        } catch(e) {}
-        
-        // O taskId retornado é "projects/.../locations/us-central1/operations/..."
-        pollingUrl = `https://us-central1-aiplatform.googleapis.com/v1/${taskId}?key=${apiKey}`;
+        // No Vertex AI, usamos o endpoint :fetchPredictOperation via POST
+        pollingUrl = flowUrl.replace(':predictLongRunning', ':fetchPredictOperation');
+        pollingMethod = 'POST';
+        pollingBody = JSON.stringify({ operationName: taskId });
     } else {
         const pollingTemplate = localStorage.getItem('cfg_flow_polling_url') || '';
         if (!pollingTemplate) {
@@ -2106,9 +2103,12 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
         } catch(e) {}
 
         fetch(getProxyUrl(pollingUrl), {
-            method: 'GET',
-
-            headers: headers
+            method: pollingMethod,
+            headers: {
+                'Content-Type': 'application/json',
+                ...headers
+            },
+            body: pollingBody
         })
         .then(res => {
             if (!res.ok) throw new Error("Erro na consulta da tarefa de vídeo.");
