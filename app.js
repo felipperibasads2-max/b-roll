@@ -2125,9 +2125,19 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
                 if (data.done === true) {
                     clearInterval(intervalId);
                     let videoUrl = '';
-                    if (data.response && data.response.generatedVideos && data.response.generatedVideos[0]) {
-                        const gcsUri = data.response.generatedVideos[0].video.uri;
-                        videoUrl = translateGcsUrl(gcsUri);
+                    if (data.response) {
+                        if (data.response.generatedVideos && data.response.generatedVideos[0]) {
+                            const gcsUri = data.response.generatedVideos[0].video.uri;
+                            videoUrl = translateGcsUrl(gcsUri);
+                        } else if (data.response.videos && data.response.videos[0]) {
+                            const videoObj = data.response.videos[0];
+                            if (videoObj.bytesBase64Encoded) {
+                                const mimeType = videoObj.mimeType || 'video/mp4';
+                                videoUrl = `data:${mimeType};base64,${videoObj.bytesBase64Encoded}`;
+                            } else if (videoObj.gcsUri) {
+                                videoUrl = translateGcsUrl(videoObj.gcsUri);
+                            }
+                        }
                     }
                     
                     if (videoUrl) {
@@ -2140,7 +2150,7 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
                             buttonEl.disabled = false;
                         }, 2000);
                     } else {
-                        throw new Error("Geração concluída, mas a URL do vídeo (GCS) não foi encontrada na resposta.");
+                        throw new Error("Geração concluída, mas a URL ou os bytes do vídeo não foram encontrados na resposta.");
                     }
                 }
             } else {
