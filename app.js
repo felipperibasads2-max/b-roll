@@ -1620,10 +1620,12 @@ function initCredentials() {
     
     // Flow Defaults
     const currentFlowUrl = localStorage.getItem('cfg_flow_url');
-    if (!currentFlowUrl || currentFlowUrl === '') {
-        localStorage.setItem('cfg_flow_url', 'https://us-central1-aiplatform.googleapis.com/v1/projects/extrator-de-comentarios/locations/us-central1/publishers/google/models/veo-2.0-generate-video:predict');
+    if (!currentFlowUrl || currentFlowUrl === '' || currentFlowUrl.includes('veo-2.0-generate-video') || currentFlowUrl.includes('extrator-de-comentarios')) {
+        localStorage.setItem('cfg_flow_url', 'https://us-central1-aiplatform.googleapis.com/v1/projects/extrator-de-comentsrios/locations/us-central1/publishers/google/models/veo-2.0-generate-001:predictLongRunning');
         localStorage.setItem('cfg_flow_mode', 'async');
     }
+
+
 
     if (!localStorage.getItem('cfg_flow_headers')) {
         localStorage.setItem('cfg_flow_headers', '{\n  "Content-Type": "application/json"\n}');
