@@ -1750,7 +1750,15 @@ Roteiro a ser analisado:
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errText = await response.text().catch(() => '');
+            let detailMsg = '';
+            try {
+                const errJson = JSON.parse(errText);
+                detailMsg = errJson.error?.message || errJson.message || errText;
+            } catch(e) {
+                detailMsg = errText || `HTTP error! status: ${response.status}`;
+            }
+            throw new Error(detailMsg);
         }
 
         const resData = await response.json();
