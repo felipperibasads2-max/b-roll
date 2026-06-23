@@ -17,9 +17,17 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { url } = req.query;
+  let { url, q } = req.query;
+  if (q) {
+    try {
+      url = Buffer.from(q, 'base64').toString('utf8');
+    } catch (err) {
+      return res.status(400).json({ error: 'Parâmetro "q" inválido (Base64).' });
+    }
+  }
+
   if (!url) {
-    return res.status(400).json({ error: 'Parâmetro "url" é obrigatório na query.' });
+    return res.status(400).json({ error: 'Parâmetro "url" ou "q" é obrigatório.' });
   }
 
   try {
