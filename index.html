@@ -293,6 +293,21 @@
                             </button>
                             <textarea id="ffmpeg-command-text" readonly class="code-output hidden" placeholder="O comando FFmpeg aparecerá aqui..."></textarea>
                         </div>
+
+                        <div class="export-divider"></div>
+
+                        <div class="export-section">
+                            <h3>☁️ 4. Renderizar na Nuvem (Modal.com)</h3>
+                            <p class="export-description">Envia os vídeos e a timeline para processamento e renderização rápida na nuvem, baixando o arquivo final em MP4.</p>
+                            <button id="btn-modal-render" class="btn btn-primary btn-full" disabled>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Renderizar na Nuvem (Modal)
+                            </button>
+                            <div id="modal-progress-wrapper" class="progress-bar-container hidden">
+                                <div class="progress-bar-label">Processando na nuvem... <span id="modal-render-status">Aguardando...</span></div>
+                                <div class="progress-bar-bg"><div class="progress-bar-fill" id="modal-bar-fill" style="width: 0%;"></div></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -373,6 +388,15 @@
                     <div class="input-group hidden" id="cfg-flow-polling-group" style="margin-top: 10px;">
                         <label for="cfg-flow-polling-url">URL de Consulta (GET) - Use {task_id}:</label>
                         <input type="text" id="cfg-flow-polling-url" class="text-input" placeholder="Ex: http://localhost:8080/task/{task_id}" style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); color: var(--text-main); padding: 8px 12px; border-radius: var(--border-radius-sm); font-family: var(--font-sans); outline: none;">
+                    </div>
+                </div>
+
+                <!-- Seção 3: Conexão Modal.com -->
+                <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
+                    <h4 style="font-size: 13px; font-weight: 600; color: #a5b4fc; margin-bottom: 8px;">☁️ Conexão Modal.com (Renderizador)</h4>
+                    <div class="input-group">
+                        <label for="cfg-modal-url">URL da API Modal (FastAPI):</label>
+                        <input type="text" id="cfg-modal-url" class="text-input" placeholder="Ex: https://...modal.run">
                     </div>
                 </div>
             </div>
