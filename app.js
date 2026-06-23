@@ -124,6 +124,7 @@ const el = {
     cfgFlowMode: document.getElementById('cfg-flow-mode'),
     cfgFlowPollingGroup: document.getElementById('cfg-flow-polling-group'),
     cfgFlowPollingUrl: document.getElementById('cfg-flow-polling-url'),
+    cfgModalUrl: document.getElementById('cfg-modal-url'),
     
     // B-Roll Recursos
     brollUpload: document.getElementById('broll-upload'),
@@ -138,6 +139,10 @@ const el = {
     renderProgressWrapper: document.getElementById('render-progress-wrapper'),
     renderPct: document.getElementById('render-pct'),
     renderBarFill: document.getElementById('render-bar-fill'),
+    btnModalRender: document.getElementById('btn-modal-render'),
+    modalProgressWrapper: document.getElementById('modal-progress-wrapper'),
+    modalRenderStatus: document.getElementById('modal-render-status'),
+    modalBarFill: document.getElementById('modal-bar-fill'),
     
     // Tabs
     tabButtons: document.querySelectorAll('.tab-btn'),
@@ -271,6 +276,7 @@ function setupEventListeners() {
         localStorage.setItem('cfg_flow_headers', el.cfgFlowHeaders.value.trim());
         localStorage.setItem('cfg_flow_mode', el.cfgFlowMode.value);
         localStorage.setItem('cfg_flow_polling_url', el.cfgFlowPollingUrl.value.trim());
+        localStorage.setItem('cfg_modal_url', el.cfgModalUrl.value.trim());
         hideModal(el.settingsModal);
     });
     
@@ -278,6 +284,9 @@ function setupEventListeners() {
     el.btnExportEdl.addEventListener('click', exportEDL);
     el.btnFfmpegCopy.addEventListener('click', copyFfmpegCommand);
     el.btnBrowserRender.addEventListener('click', startBrowserRender);
+    if (el.btnModalRender) {
+        el.btnModalRender.addEventListener('click', renderVideoOnModal);
+    }
 }
 
 function varColor(name) {
@@ -328,6 +337,7 @@ async function handleArollUpload() {
         el.btnBrowserRender.disabled = false;
         el.btnExportEdl.disabled = false;
         el.btnFfmpegCopy.disabled = false;
+        if (el.btnModalRender) el.btnModalRender.disabled = false;
         
         updateTimelineLayout();
         
@@ -1641,6 +1651,9 @@ function initCredentials() {
         localStorage.setItem('cfg_flow_polling_url', '');
     }
 
+    if (!localStorage.getItem('cfg_modal_url')) {
+        localStorage.setItem('cfg_modal_url', '');
+    }
     
     el.cfgGeminiKey.value = localStorage.getItem('cfg_gemini_key');
     el.cfgClaudeKey.value = localStorage.getItem('cfg_claude_key');
@@ -1649,6 +1662,7 @@ function initCredentials() {
     el.cfgFlowHeaders.value = localStorage.getItem('cfg_flow_headers');
     el.cfgFlowMode.value = localStorage.getItem('cfg_flow_mode');
     el.cfgFlowPollingUrl.value = localStorage.getItem('cfg_flow_polling_url');
+    el.cfgModalUrl.value = localStorage.getItem('cfg_modal_url');
     
     toggleFlowPollingView();
 }
@@ -2295,5 +2309,124 @@ async function generateAllFlowBrolls() {
         el.btnGenerateAllFlow.style.background = '';
         el.btnGenerateAllFlow.disabled = false;
     }, 4000);
+}
+
+async function renderVideoOnModal() {
+    if (!state.arollFile) {
+        alert("Por favor, carregue o vídeo do avatar (A-roll) primeiro.");
+        return;
+    }
+    const modalUrl = localStorage.getItem('cfg_modal_url') || '';
+    if (!modalUrl) {
+        alert("Configuração pendente: Por favor, insira a URL da API Modal.com nas Configurações (⚙️).");
+        showModal(el.settingsModal);
+        return;
+    }
+
+    if (state.timelineBrolls.length === 0) {
+        alert("Adicione pelo menos um B-roll na timeline antes de renderizar.");
+        return;
+    }
+
+    // Desabilitar o botão e mostrar progresso
+    el.btnModalRender.disabled = true;
+    el.modalProgressWrapper.classList.remove('hidden');
+    el.modalRenderStatus.textContent = "Preparando arquivos...";
+    el.modalBarFill.style.width = "10%";
+
+    try {
+        const formData = new FormData();
+        
+        // 1. Adicionar o vídeo principal A-roll
+        formData.append("aroll", state.arollFile);
+        
+        // 2. Coletar e adicionar os arquivos de B-roll utilizados na timeline
+        const usedBrollIds = [...new Set(state.timelineBrolls.map(tb => tb.mediaId))];
+        const addedFiles = new Set();
+
+        for (const mediaId of usedBrollIds) {
+            const media = state.brolls.find(b => b.id === mediaId);
+            if (media && media.file) {
+                if (!addedFiles.has(media.name)) {
+                    formData.append("brolls", media.file, media.name);
+                    addedFiles.add(media.name);
+                }
+            } else if (media && !media.file) {
+                // Se for um vídeo gerado pelo Veo (base64 na memória)
+                if (!addedFiles.has(media.name)) {
+                    let fileBlob;
+                    if (media.url.startsWith('data:')) {
+                        const response = await fetch(media.url);
+                        fileBlob = await response.blob();
+                    } else {
+                        const response = await fetch(media.url);
+                        fileBlob = await response.blob();
+                    }
+                    formData.append("brolls", fileBlob, media.name);
+                    addedFiles.add(media.name);
+                }
+            }
+        }
+
+        // 3. Montar e adicionar a lista de edições
+        const editList = state.timelineBrolls.map(tb => ({
+            start: tb.start,
+            duration: tb.duration,
+            mediaName: tb.mediaName
+        }));
+        formData.append("edit_list", JSON.stringify(editList));
+
+        el.modalRenderStatus.textContent = "Enviando dados (Upload)...";
+        el.modalBarFill.style.width = "40%";
+
+        // 4. Enviar a requisição para o servidor da Modal
+        let endpoint = modalUrl;
+        if (!endpoint.endsWith('/render')) {
+            endpoint = endpoint.endsWith('/') ? `${endpoint}render` : `${endpoint}/render`;
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({ detail: "Erro desconhecido no servidor Modal" }));
+            throw new Error(errData.detail || `Erro HTTP ${response.status}`);
+        }
+
+        el.modalRenderStatus.textContent = "Processando FFmpeg na nuvem...";
+        el.modalBarFill.style.width = "75%";
+
+        // 5. Receber o arquivo de resposta
+        const videoBlob = await response.blob();
+        el.modalBarFill.style.width = "95%";
+        el.modalRenderStatus.textContent = "Fazendo download do vídeo...";
+
+        // Iniciar download do arquivo
+        const downloadUrl = URL.createObjectURL(videoBlob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `video_final_brolls_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+
+        el.modalBarFill.style.width = "100%";
+        el.modalRenderStatus.textContent = "Renderização concluída!";
+
+        setTimeout(() => {
+            el.modalProgressWrapper.classList.add('hidden');
+            el.btnModalRender.disabled = false;
+        }, 3000);
+
+    } catch (err) {
+        console.error("Erro na renderização Modal:", err);
+        alert(`Falha ao renderizar na nuvem: ${err.message}`);
+        el.modalRenderStatus.textContent = "Falha no processo";
+        el.modalBarFill.style.width = "0%";
+        el.btnModalRender.disabled = false;
+    }
 }
 
