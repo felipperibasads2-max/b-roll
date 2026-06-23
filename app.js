@@ -108,6 +108,7 @@ const el = {
     suggestionsContainer: document.getElementById('suggestions-container'),
     sugFrequency: document.getElementById('sug-frequency'),
     chkKeywordsOnly: document.getElementById('chk-keywords-only'),
+    btnGenerateAllFlow: document.getElementById('btn-generate-all-flow'),
     
     // Settings & IA avançada
     btnSettings: document.getElementById('btn-settings'),
@@ -248,6 +249,9 @@ function setupEventListeners() {
     el.srtUpload.addEventListener('change', handleSrtUpload);
     el.sugFrequency.addEventListener('change', generateBrollSuggestions);
     el.chkKeywordsOnly.addEventListener('change', generateBrollSuggestions);
+    if (el.btnGenerateAllFlow) {
+        el.btnGenerateAllFlow.addEventListener('click', generateAllFlowBrolls);
+    }
 
     // Timeline Drag / Interaction
     setupTimelineInteraction();
@@ -801,6 +805,9 @@ function generateBrollSuggestions() {
     });
 
     el.sugBadge.textContent = state.suggestions.length;
+    if (el.btnGenerateAllFlow) {
+        el.btnGenerateAllFlow.classList.add('hidden');
+    }
 
     if (state.suggestions.length === 0) {
         container.innerHTML = `
@@ -1798,6 +1805,15 @@ function renderAiSuggestions() {
     
     el.sugBadge.textContent = state.suggestions.length;
 
+    const hasPrompts = state.suggestions.some(s => s.prompt);
+    if (el.btnGenerateAllFlow) {
+        if (hasPrompts) {
+            el.btnGenerateAllFlow.classList.remove('hidden');
+        } else {
+            el.btnGenerateAllFlow.classList.add('hidden');
+        }
+    }
+
     if (state.suggestions.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
@@ -1904,12 +1920,12 @@ function renderAiSuggestions() {
     });
 }
 
-async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl) {
+async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl, isBatch = false) {
     const flowUrl = localStorage.getItem('cfg_flow_url') || '';
     if (!flowUrl) {
         alert("Antes de disparar a geração, configure a URL do seu Endpoint nas Configurações (⚙️).");
         showModal(el.settingsModal);
-        return;
+        return Promise.reject(new Error("URL do Endpoint não configurada"));
     }
 
     buttonEl.disabled = true;
@@ -1969,55 +1985,57 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl) {
     }
 
     // 3. Disparar Requisição
-    fetch(getProxyUrl(flowUrl), {
-        method: 'POST',
-
-        headers: {
-            'Content-Type': 'application/json',
-            ...headers
-        },
-        body: JSON.stringify(payload)
-    })
-    .then(res => {
-        if (!res.ok) throw new Error(`Status de erro HTTP: ${res.status}`);
-        return res.json();
-    })
-    .then(data => {
-        if (!isAsyncMode) {
-            // Modo Síncrono: a resposta traz a URL direta do vídeo gerado
-            const videoUrl = data.url || data.video_url || data.video || (typeof data === 'string' ? data : '');
-            if (videoUrl) {
-                finishFlowGeneration(blockId, videoUrl, word);
-                buttonEl.innerHTML = '⚡ Concluído!';
-                buttonEl.style.background = 'var(--accent)';
-                setTimeout(() => {
-                    buttonEl.innerHTML = '⚡ Gerar no Flow';
-                    buttonEl.style.background = '';
-                    buttonEl.disabled = false;
-                }, 2000);
+    return new Promise((resolve, reject) => {
+        fetch(getProxyUrl(flowUrl), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...headers
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(res => {
+            if (!res.ok) throw new Error(`Status de erro HTTP: ${res.status}`);
+            return res.json();
+        })
+        .then(data => {
+            if (!isAsyncMode) {
+                // Modo Síncrono: a resposta traz a URL direta do vídeo gerado
+                const videoUrl = data.url || data.video_url || data.video || (typeof data === 'string' ? data : '');
+                if (videoUrl) {
+                    finishFlowGeneration(blockId, videoUrl, word);
+                    buttonEl.innerHTML = '⚡ Concluído!';
+                    buttonEl.style.background = 'var(--accent)';
+                    setTimeout(() => {
+                        buttonEl.innerHTML = '⚡ Gerar no Flow';
+                        buttonEl.style.background = '';
+                        buttonEl.disabled = false;
+                    }, 2000);
+                    resolve(videoUrl);
+                } else {
+                    throw new Error("URL do vídeo não encontrada no JSON retornado pela API.");
+                }
             } else {
-                throw new Error("URL do vídeo não encontrada no JSON retornado pela API.");
+                // Modo Assíncrono (Vertex AI ou Flow com fila de tarefas)
+                const taskId = isVertexAI ? data.name : (data.task_id || data.id || data.taskId);
+                if (taskId) {
+                    startFlowPolling(blockId, taskId, word, buttonEl, resolve, reject, isBatch);
+                } else {
+                    throw new Error("ID de tarefa (task_id / name) não retornado pela API de geração assíncrona.");
+                }
             }
-        } else {
-            // Modo Assíncrono (Vertex AI ou Flow com fila de tarefas)
-            // No Vertex AI, a resposta é um objeto contendo o campo "name" representando a operação (ex: projects/.../locations/us-central1/operations/...)
-            const taskId = isVertexAI ? data.name : (data.task_id || data.id || data.taskId);
-            if (taskId) {
-                startFlowPolling(blockId, taskId, word, buttonEl);
-            } else {
-                throw new Error("ID de tarefa (task_id / name) não retornado pela API de geração assíncrona.");
-            }
-        }
-    })
-    .catch(err => {
-        console.error("Erro de geração no Flow:", err);
-        alert(`Falha ao disparar a geração de vídeo: ${err.message}`);
-        
-        // Remover bloco placeholder da timeline
-        state.timelineBrolls = state.timelineBrolls.filter(b => b.id !== blockId);
-        drawTimelineBrolls();
-        buttonEl.disabled = false;
-        buttonEl.innerHTML = '⚡ Gerar no Flow';
+        })
+        .catch(err => {
+            console.error("Erro de geração no Flow:", err);
+            if (!isBatch) alert(`Falha ao disparar a geração de vídeo: ${err.message}`);
+            
+            // Remover bloco placeholder da timeline
+            state.timelineBrolls = state.timelineBrolls.filter(b => b.id !== blockId);
+            drawTimelineBrolls();
+            buttonEl.disabled = false;
+            buttonEl.innerHTML = '⚡ Gerar no Flow';
+            reject(err);
+        });
     });
 }
 
@@ -2056,7 +2074,7 @@ function translateGcsUrl(gcsUri) {
     return `https://storage.googleapis.com/${bucket}/${path}`;
 }
 
-function startFlowPolling(blockId, taskId, keyword, buttonEl) {
+function startFlowPolling(blockId, taskId, keyword, buttonEl, resolve, reject, isBatch = false) {
     const flowUrl = localStorage.getItem('cfg_flow_url') || '';
     const isVertexAI = flowUrl.includes('aiplatform.googleapis.com');
     let pollingUrl = '';
@@ -2071,11 +2089,12 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
     } else {
         const pollingTemplate = localStorage.getItem('cfg_flow_polling_url') || '';
         if (!pollingTemplate) {
-            alert("Tarefa criada, mas nenhuma URL de consulta (polling) foi definida nas configurações.");
+            if (!isBatch) alert("Tarefa criada, mas nenhuma URL de consulta (polling) foi definida nas configurações.");
             state.timelineBrolls = state.timelineBrolls.filter(b => b.id !== blockId);
             drawTimelineBrolls();
             buttonEl.disabled = false;
             buttonEl.innerHTML = '⚡ Gerar no Flow';
+            if (reject) reject(new Error("URL de polling não configurada"));
             return;
         }
         pollingUrl = pollingTemplate.replace('{task_id}', taskId);
@@ -2087,11 +2106,12 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
         // Timeout de 10 minutos (120 tentativas a cada 5s)
         if (attempts > 120) {
             clearInterval(intervalId);
-            alert("A geração do vídeo expirou após 10 minutos.");
+            if (!isBatch) alert("A geração do vídeo expirou após 10 minutos.");
             state.timelineBrolls = state.timelineBrolls.filter(b => b.id !== blockId);
             drawTimelineBrolls();
             buttonEl.disabled = false;
             buttonEl.innerHTML = '⚡ Gerar no Flow';
+            if (reject) reject(new Error("Timeout de geração excedido"));
             return;
         }
 
@@ -2119,6 +2139,7 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
                 // Tratar resposta do Long-Running Operation (LRO) do GCP
                 if (data.error) {
                     clearInterval(intervalId);
+                    if (reject) reject(new Error(data.error.message || "A geração do vídeo falhou no GCP."));
                     throw new Error(data.error.message || "A geração do vídeo falhou no GCP.");
                 }
                 
@@ -2149,7 +2170,9 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
                             buttonEl.style.background = '';
                             buttonEl.disabled = false;
                         }, 2000);
+                        if (resolve) resolve(videoUrl);
                     } else {
+                        if (reject) reject(new Error("Geração concluída, mas a URL ou os bytes do vídeo não foram encontrados na resposta."));
                         throw new Error("Geração concluída, mas a URL ou os bytes do vídeo não foram encontrados na resposta.");
                     }
                 }
@@ -2169,11 +2192,14 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
                             buttonEl.style.background = '';
                             buttonEl.disabled = false;
                         }, 2000);
+                        if (resolve) resolve(videoUrl);
                     } else {
+                        if (reject) reject(new Error("Geração concluída, mas o link do vídeo não foi retornado."));
                         throw new Error("Geração concluída, mas o link do vídeo não foi retornado.");
                     }
                 } else if (status === 'failed' || status === 'error') {
                     clearInterval(intervalId);
+                    if (reject) reject(new Error("A tarefa falhou ou retornou erro no servidor."));
                     throw new Error("A tarefa falhou ou retornou erro no servidor.");
                 }
             }
@@ -2181,14 +2207,93 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl) {
         .catch(err => {
             clearInterval(intervalId);
             console.error("Erro consultando status:", err);
-            alert(`Erro na geração: ${err.message}`);
+            if (!isBatch) alert(`Erro na geração: ${err.message}`);
             
             // Remover do timeline
             state.timelineBrolls = state.timelineBrolls.filter(b => b.id !== blockId);
             drawTimelineBrolls();
             buttonEl.disabled = false;
             buttonEl.innerHTML = '⚡ Gerar no Flow';
+            if (reject) reject(err);
         });
     }, 5000);
+}
+
+async function generateAllFlowBrolls() {
+    if (!el.btnGenerateAllFlow) return;
+    
+    // Buscar todos os botões de geração na interface
+    const buttons = Array.from(el.suggestionsContainer.querySelectorAll('.btn-generate-flow'));
+    if (buttons.length === 0) {
+        alert("Nenhuma sugestão com prompt de geração encontrada na aba atual.");
+        return;
+    }
+
+    // Filtrar sugestões que ainda não possuem bloco na timeline (evitar duplicar)
+    const suggestionsToGenerate = [];
+    buttons.forEach(btn => {
+        const time = parseFloat(btn.getAttribute('data-time'));
+        const prompt = decodeURIComponent(btn.getAttribute('data-prompt'));
+        const word = decodeURIComponent(btn.getAttribute('data-word'));
+        
+        const alreadyExists = state.timelineBrolls.some(b => Math.abs(b.start - time) < 0.5);
+        if (!alreadyExists) {
+            suggestionsToGenerate.push({ btn, time, prompt, word });
+        }
+    });
+
+    if (suggestionsToGenerate.length === 0) {
+        alert("Todas as sugestões visíveis já possuem cenas de B-roll associadas na timeline.");
+        return;
+    }
+
+    // Confirmar início do processo em lote se houver muitas cenas
+    if (suggestionsToGenerate.length > 1) {
+        const confirmMsg = `Deseja enfileirar a geração de ${suggestionsToGenerate.length} cenas de B-roll?\n\nAs cenas serão geradas sequencialmente. Isso pode levar alguns minutos.`;
+        if (!confirm(confirmMsg)) return;
+    }
+
+    el.btnGenerateAllFlow.disabled = true;
+    const originalText = el.btnGenerateAllFlow.innerHTML;
+
+    let successCount = 0;
+    let failCount = 0;
+    let index = 0;
+
+    for (const task of suggestionsToGenerate) {
+        index++;
+        el.btnGenerateAllFlow.innerHTML = `⚡ Gerando ${index}/${suggestionsToGenerate.length}...`;
+        el.btnGenerateAllFlow.style.background = 'var(--warning)';
+        
+        try {
+            await triggerGoogleFlowGeneration(task.prompt, task.time, task.word, task.btn, true);
+            successCount++;
+        } catch (err) {
+            console.error(`Erro na geração em lote para o termo "${task.word}":`, err);
+            failCount++;
+            
+            // Marcar botão individual como falho
+            task.btn.innerHTML = '❌ Falhou';
+            task.btn.style.background = 'var(--danger)';
+            setTimeout(() => {
+                task.btn.innerHTML = '⚡ Gerar no Flow';
+                task.btn.style.background = '';
+                task.btn.disabled = false;
+            }, 3000);
+        }
+        
+        // Adicionar um pequeno delay de segurança (1000ms) entre as chamadas para não sobrecarregar
+        await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Finalizar estado do botão
+    el.btnGenerateAllFlow.innerHTML = `⚡ Concluído! (${successCount} OK, ${failCount} Erros)`;
+    el.btnGenerateAllFlow.style.background = successCount > 0 ? 'var(--accent)' : 'var(--danger)';
+    
+    setTimeout(() => {
+        el.btnGenerateAllFlow.innerHTML = originalText;
+        el.btnGenerateAllFlow.style.background = '';
+        el.btnGenerateAllFlow.disabled = false;
+    }, 4000);
 }
 
