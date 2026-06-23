@@ -42,7 +42,7 @@ export default async function handler(req, res) {
 
     // Injetar chave das variáveis de ambiente se não estiver presente na URL
     if (!targetUrl.searchParams.has('key')) {
-      if (targetUrl.hostname.includes('aiplatform.googleapis.com') && process.env.GCP_VERTEX_API_KEY) {
+      if (targetUrl.hostname.includes('aiplatform.googleapis.com') && process.env.GCP_VERTEX_API_KEY && !req.headers['authorization']) {
         targetUrl.searchParams.set('key', process.env.GCP_VERTEX_API_KEY);
       } else if (targetUrl.hostname.includes('generativelanguage.googleapis.com') && process.env.GEMINI_API_KEY) {
         targetUrl.searchParams.set('key', process.env.GEMINI_API_KEY);
