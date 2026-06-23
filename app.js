@@ -2008,8 +2008,18 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl, isBatch
             },
             body: JSON.stringify(payload)
         })
-        .then(res => {
-            if (!res.ok) throw new Error(`Status de erro HTTP: ${res.status}`);
+        .then(async res => {
+            if (!res.ok) {
+                const errText = await res.text().catch(() => '');
+                let detailMsg = '';
+                try {
+                    const errJson = JSON.parse(errText);
+                    detailMsg = errJson.error?.message || errJson.message || errText;
+                } catch(e) {
+                    detailMsg = errText || `Status de erro HTTP: ${res.status}`;
+                }
+                throw new Error(detailMsg);
+            }
             return res.json();
         })
         .then(data => {
@@ -2144,8 +2154,18 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl, resolve, reject, i
             },
             body: pollingBody
         })
-        .then(res => {
-            if (!res.ok) throw new Error("Erro na consulta da tarefa de vídeo.");
+        .then(async res => {
+            if (!res.ok) {
+                const errText = await res.text().catch(() => '');
+                let detailMsg = '';
+                try {
+                    const errJson = JSON.parse(errText);
+                    detailMsg = errJson.error?.message || errJson.message || errText;
+                } catch(e) {
+                    detailMsg = errText || `Status de erro HTTP: ${res.status}`;
+                }
+                throw new Error(detailMsg);
+            }
             return res.json();
         })
         .then(data => {
