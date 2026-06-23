@@ -1589,8 +1589,9 @@ function getProxyUrl(url) {
     if (isLocalhostTraditional) {
         return url;
     }
-    // Caso contrário (Vercel ou vercel dev no localhost), usa o proxy serverless nativo
-    return `/api/vertex-proxy?url=${encodeURIComponent(url)}`;
+    // Codifica a URL em Base64 para evitar que firewalls locais bloqueiem o domínio do Google nos parâmetros
+    const encodedUrl = btoa(url);
+    return `/api/vertex-proxy?q=${encodedUrl}`;
 }
 
 
