@@ -66,7 +66,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  let { url, q } = req.query;
+  let url = req.query.url;
+  let q = req.query.q;
+
+  if (req.method === 'POST' && req.body) {
+    try {
+      const bodyObj = typeof req.body === 'object' ? req.body : JSON.parse(req.body);
+      if (bodyObj.url) url = bodyObj.url;
+      if (bodyObj.q) q = bodyObj.q;
+    } catch (e) {
+      // Ignorar erros de parse se o corpo não for JSON
+    }
+  }
+
   if (q) {
     try {
       url = Buffer.from(q, 'base64').toString('utf8');
@@ -140,8 +152,17 @@ export default async function handler(req, res) {
     // Repassar o corpo da requisição em métodos de escrita
     if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
       if (req.body) {
-        // A Vercel faz o parse do body automaticamente se for JSON
-        fetchOptions.body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body;
+        try {
+          let bodyObj = typeof req.body === 'object' ? { ...req.body } : JSON.parse(req.body);
+          
+          // Remover propriedades de controle da ponte antes de encaminhar para o Google
+          if (bodyObj.url) delete bodyObj.url;
+          if (bodyObj.q) delete bodyObj.q;
+          
+          fetchOptions.body = JSON.stringify(bodyObj);
+        } catch (e) {
+          fetchOptions.body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body;
+        }
       }
     }
 
