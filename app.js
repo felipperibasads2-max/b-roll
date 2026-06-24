@@ -2292,7 +2292,7 @@ async function generateAllFlowBrolls() {
 
     // Confirmar início do processo em lote se houver muitas cenas
     if (suggestionsToGenerate.length > 1) {
-        const confirmMsg = `Deseja enfileirar a geração de ${suggestionsToGenerate.length} cenas de B-roll?\n\nAs cenas serão geradas sequencialmente. Isso pode levar alguns minutos.`;
+        const confirmMsg = `Deseja enfileirar a geração de ${suggestionsToGenerate.length} cenas de B-roll?\n\nAs cenas serão geradas em paralelo (grupos de 3).`;
         if (!confirm(confirmMsg)) return;
     }
 
@@ -2301,32 +2301,42 @@ async function generateAllFlowBrolls() {
 
     let successCount = 0;
     let failCount = 0;
-    let index = 0;
+    
+    // Processar em lotes (chunks) de 3 para não estourar quotas da API
+    const batchSize = 3;
+    const tasks = [...suggestionsToGenerate];
 
-    for (const task of suggestionsToGenerate) {
-        index++;
-        el.btnGenerateAllFlow.innerHTML = `⚡ Gerando ${index}/${suggestionsToGenerate.length}...`;
+    for (let i = 0; i < tasks.length; i += batchSize) {
+        const currentBatch = tasks.slice(i, i + batchSize);
+        el.btnGenerateAllFlow.innerHTML = `⚡ Gerando ${i + 1} a ${Math.min(i + batchSize, tasks.length)} de ${tasks.length}...`;
         el.btnGenerateAllFlow.style.background = 'var(--warning)';
-        
-        try {
-            await triggerGoogleFlowGeneration(task.prompt, task.time, task.word, task.btn, true);
-            successCount++;
-        } catch (err) {
-            console.error(`Erro na geração em lote para o termo "${task.word}":`, err);
-            failCount++;
-            
-            // Marcar botão individual como falho
-            task.btn.innerHTML = '❌ Falhou';
-            task.btn.style.background = 'var(--danger)';
-            setTimeout(() => {
-                task.btn.innerHTML = '⚡ Gerar no Flow';
-                task.btn.style.background = '';
-                task.btn.disabled = false;
-            }, 3000);
+
+        const promises = currentBatch.map(async (task) => {
+            try {
+                await triggerGoogleFlowGeneration(task.prompt, task.time, task.word, task.btn, true);
+                successCount++;
+            } catch (err) {
+                console.error(`Erro na geração para o termo "${task.word}":`, err);
+                failCount++;
+                
+                // Marcar botão individual como falho
+                task.btn.innerHTML = '❌ Falhou';
+                task.btn.style.background = 'var(--danger)';
+                setTimeout(() => {
+                    task.btn.innerHTML = '⚡ Gerar no Flow';
+                    task.btn.style.background = '';
+                    task.btn.disabled = false;
+                }, 4000);
+            }
+        });
+
+        // Aguardar o lote atual de 3 terminar antes de começar o próximo
+        await Promise.all(promises);
+
+        // Um pequeno delay entre os lotes
+        if (i + batchSize < tasks.length) {
+            await new Promise(r => setTimeout(r, 2000));
         }
-        
-        // Adicionar um pequeno delay de segurança (1000ms) entre as chamadas para não sobrecarregar
-        await new Promise(r => setTimeout(r, 1000));
     }
 
     // Finalizar estado do botão
