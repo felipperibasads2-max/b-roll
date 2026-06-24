@@ -1768,7 +1768,28 @@ Roteiro a ser analisado:
                     }]
                 }],
                 generationConfig: {
-                    responseMimeType: "application/json"
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "object",
+                        properties: {
+                            sugestoes: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        tempo: { type: "number" },
+                                        palavra: { type: "string" },
+                                        categoria: { type: "string" },
+                                        contexto: { type: "string" },
+                                        sugestao: { type: "string" },
+                                        prompt: { type: "string" }
+                                    },
+                                    required: ["tempo", "palavra", "categoria", "contexto", "sugestao", "prompt"]
+                                }
+                            }
+                        },
+                        required: ["sugestoes"]
+                    }
                 }
             })
         });
