@@ -1,5 +1,54 @@
-// Vercel Serverless Function: Bridge CORS para APIs do Google (Vertex AI e Gemini)
-// Evita a necessidade de usar extensões de CORS no navegador em produção.
+import crypto from 'crypto';
+
+async function getAccessTokenFromServiceAccount(serviceAccountJson) {
+  const sa = JSON.parse(serviceAccountJson);
+  const header = {
+    alg: 'RS256',
+    typ: 'JWT'
+  };
+  
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 3600;
+  
+  const payload = {
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: exp,
+    iat: iat
+  };
+  
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  
+  const signatureInput = `${base64Header}.${base64Payload}`;
+  
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(signatureInput);
+  const privateKey = sa.private_key.replace(/\\n/g, '\n');
+  const signature = signer.sign(privateKey, 'base64url');
+  
+  const jwt = `${signatureInput}.${signature}`;
+  
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt
+    })
+  });
+  
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    throw new Error(`GCP token exchange failed: ${errorText}`);
+  }
+  
+  const tokenData = await tokenResponse.json();
+  return tokenData.access_token;
+}
 
 export default async function handler(req, res) {
   // Habilitar CORS Headers para desenvolvimento local
@@ -69,6 +118,20 @@ export default async function handler(req, res) {
     for (const header of headersToForward) {
       if (req.headers[header]) {
         fetchOptions.headers[header] = req.headers[header];
+      }
+    }
+
+    // Se não houver Authorization nos headers e tivermos a chave da conta de serviço configurada na Vercel
+    if (!fetchOptions.headers['authorization'] && process.env.GCP_SERVICE_ACCOUNT_KEY) {
+      try {
+        const token = await getAccessTokenFromServiceAccount(process.env.GCP_SERVICE_ACCOUNT_KEY);
+        fetchOptions.headers['authorization'] = `Bearer ${token}`;
+      } catch (err) {
+        console.error("Erro gerando token via Service Account:", err);
+        return res.status(500).json({ 
+          error: 'Falha na ponte da Vercel ao gerar token de acesso do Google Cloud.', 
+          details: err.message 
+        });
       }
     }
 
