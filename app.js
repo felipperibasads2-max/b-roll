@@ -1,7 +1,22 @@
-/* ==========================================
-   B-ROLL DIRECTOR - CORE ENGINE
-   JavaScript Client-Side para Edição e Sincronismo
-   ========================================== */
+// --- IMPORTAÇÃO DO SDK DO FIREBASE ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+
+// Configuração oficial do Firebase canaisdarkora
+const firebaseConfig = {
+  apiKey: "AIzaSyAnWJMwvUx0AR6VbG1WmXEfXZAkEFahmf4",
+  authDomain: "canaisdarkora.firebaseapp.com",
+  projectId: "canaisdarkora",
+  storageBucket: "canaisdarkora.firebasestorage.app",
+  messagingSenderId: "964682426923",
+  appId: "1:964682426923:web:dae2f6942398b9598a586e"
+};
+
+// Iniciar o Firebase
+const fbApp = initializeApp(firebaseConfig);
+const firebaseDb = getFirestore(fbApp, "canaldarkora");
+const firebaseStorage = getStorage(fbApp);
 
 // --- BANCO DE PALAVRAS-CHAVE PARA SUGESTÕES DE B-ROLL ---
 const KEYWORDS_DB = {
@@ -1379,32 +1394,40 @@ function generateFfmpegCommand() {
     }
 
     // Construção do comando FFmpeg com complex_filter
-    // Exemplo para um B-roll: ffmpeg -i aroll.mp4 -i broll1.mp4 -filter_complex "[0:v][1:v] overlay=enable='between(t,2,5)' [outv]" -map "[outv]" -map 0:a output.mp4
     let inputs = `-i "${state.arollFile.name}"`;
     let filter = "";
     
-    // Agrupar inputs de B-roll únicos
+    // Agrupar inputs de B-roll únicos e válidos
     const uniqueBrollMediaIds = [...new Set(state.timelineBrolls.map(b => b.mediaId))];
     const mediaIdToIndex = {};
+    let nextInputIdx = 1;
     
-    uniqueBrollMediaIds.forEach((id, idx) => {
+    uniqueBrollMediaIds.forEach((id) => {
         const media = state.brolls.find(m => m.id === id);
         if (media) {
             inputs += ` -i "${media.name}"`;
-            mediaIdToIndex[id] = idx + 1; // 0 é o A-roll
+            mediaIdToIndex[id] = nextInputIdx++;
         }
     });
 
+    // Filtrar apenas B-rolls da timeline que possuem arquivo de mídia correspondente
+    const validTimelineBrolls = state.timelineBrolls.filter(b => mediaIdToIndex[b.mediaId] !== undefined);
+
+    if (validTimelineBrolls.length === 0) {
+        const cmd = `ffmpeg ${inputs} -c:v libx264 -crf 18 -pix_fmt yuv420p "output_com_brolls.mp4"`;
+        el.ffmpegCommandText.value = cmd;
+        el.ffmpegCommandText.classList.remove('hidden');
+        return;
+    }
+
     let lastOutputLabel = "[0:v]";
-    state.timelineBrolls.forEach((b, idx) => {
+    validTimelineBrolls.forEach((b, idx) => {
         const inputIdx = mediaIdToIndex[b.mediaId];
         const nextLabel = `[v_out${idx}]`;
         
-        // Loop/trim B-roll se o bloco for maior que o clipe
-        // Overlay filter habilitado apenas na janela 'between(t, start, end)'
         filter += `${lastOutputLabel}[${inputIdx}:v] overlay=enable='between(t,${b.start.toFixed(2)},${(b.start+b.duration).toFixed(2)})':eof_action=pass`;
         
-        if (idx === state.timelineBrolls.length - 1) {
+        if (idx === validTimelineBrolls.length - 1) {
             filter += ` [outv]`;
         } else {
             filter += ` ${nextLabel}; `;
@@ -2370,102 +2393,184 @@ async function renderVideoOnModal() {
     // Desabilitar o botão e mostrar progresso
     el.btnModalRender.disabled = true;
     el.modalProgressWrapper.classList.remove('hidden');
-    el.modalRenderStatus.textContent = "Preparando arquivos...";
-    el.modalBarFill.style.width = "10%";
+    el.modalRenderStatus.textContent = "Preparando upload...";
+    el.modalBarFill.style.width = "2%";
+
+    const jobId = `render_broll_${Date.now()}`;
 
     try {
-        const formData = new FormData();
-        
-        // 1. Adicionar o vídeo principal A-roll
-        formData.append("aroll", state.arollFile);
-        
-        // 2. Coletar e adicionar os arquivos de B-roll utilizados na timeline
-        const usedBrollIds = [...new Set(state.timelineBrolls.map(tb => tb.mediaId))];
-        const addedFiles = new Set();
+        // 1. Criar registro inicial no Firestore
+        await setDoc(doc(firebaseDb, 'render_jobs', jobId), { 
+            status: "Preparando upload...", 
+            progress: 2 
+        });
 
-        for (const mediaId of usedBrollIds) {
+        // 2. Upload do A-roll (Vídeo Principal) com upload resumível
+        el.modalRenderStatus.textContent = "Enviando A-Roll (0%)...";
+        const arollStoragePath = `projetos/${jobId}/aroll.mp4`;
+        const arollRef = ref(firebaseStorage, arollStoragePath);
+        const arollUploadTask = uploadBytesResumable(arollRef, state.arollFile);
+
+        await new Promise((resolve, reject) => {
+            arollUploadTask.on('state_changed', 
+                (snapshot) => {
+                    const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                    // O upload do A-roll representa os primeiros 5% a 50% da barra de progresso
+                    const progressValue = 5 + Math.round(pct * 0.45);
+                    el.modalBarFill.style.width = `${progressValue}%`;
+                    el.modalRenderStatus.textContent = `Enviando A-Roll (${pct}%)...`;
+                },
+                (error) => reject(error),
+                () => resolve()
+            );
+        });
+
+        await setDoc(doc(firebaseDb, 'render_jobs', jobId), { 
+            status: "A-Roll enviado com sucesso. Preparando B-rolls...", 
+            progress: 50 
+        }, { merge: true });
+
+        // 3. Upload dos B-rolls ativos na timeline
+        const usedBrollIds = [...new Set(state.timelineBrolls.map(tb => tb.mediaId))];
+        const totalBrolls = usedBrollIds.length;
+        let brollsUploaded = 0;
+
+        for (let i = 0; i < totalBrolls; i++) {
+            const mediaId = usedBrollIds[i];
             const media = state.brolls.find(b => b.id === mediaId);
-            if (media && media.file) {
-                if (!addedFiles.has(media.name)) {
-                    formData.append("brolls", media.file, media.name);
-                    addedFiles.add(media.name);
+            if (media) {
+                let fileBlob;
+                let filename = media.name;
+                if (media.file) {
+                    fileBlob = media.file;
+                } else {
+                    const response = await fetch(media.url);
+                    fileBlob = await response.blob();
                 }
-            } else if (media && !media.file) {
-                // Se for um vídeo gerado pelo Veo (base64 na memória)
-                if (!addedFiles.has(media.name)) {
-                    let fileBlob;
-                    if (media.url.startsWith('data:')) {
-                        const response = await fetch(media.url);
-                        fileBlob = await response.blob();
-                    } else {
-                        const response = await fetch(media.url);
-                        fileBlob = await response.blob();
-                    }
-                    formData.append("brolls", fileBlob, media.name);
-                    addedFiles.add(media.name);
-                }
+
+                el.modalRenderStatus.textContent = `Enviando B-Roll ${i+1}/${totalBrolls}...`;
+                const brollRef = ref(firebaseStorage, `projetos/${jobId}/brolls/${filename}`);
+                const brollUploadTask = uploadBytesResumable(brollRef, fileBlob);
+
+                await new Promise((resolve, reject) => {
+                    brollUploadTask.on('state_changed',
+                        null,
+                        (error) => reject(error),
+                        () => resolve()
+                    );
+                });
+
+                brollsUploaded++;
+                // O upload dos B-rolls representa de 50% a 70% da barra de progresso
+                const progressValue = 50 + Math.round((brollsUploaded / totalBrolls) * 20);
+                el.modalBarFill.style.width = `${progressValue}%`;
+                await setDoc(doc(firebaseDb, 'render_jobs', jobId), { 
+                    status: `Enviando B-Rolls (${brollsUploaded}/${totalBrolls})...`, 
+                    progress: progressValue 
+                }, { merge: true });
             }
         }
 
-        // 3. Montar e adicionar a lista de edições
-        const editList = state.timelineBrolls.map(tb => ({
-            start: tb.start,
-            duration: tb.duration,
-            mediaName: tb.mediaName
-        }));
-        formData.append("edit_list", JSON.stringify(editList));
+        // 4. Disparar o gatilho JSON leve para o motor na Modal
+        el.modalRenderStatus.textContent = "Acionando motor na nuvem...";
+        el.modalBarFill.style.width = "75%";
+        await setDoc(doc(firebaseDb, 'render_jobs', jobId), { 
+            status: "Acionando motor na nuvem...", 
+            progress: 75 
+        }, { merge: true });
 
-        el.modalRenderStatus.textContent = "Enviando dados (Upload)...";
-        el.modalBarFill.style.width = "40%";
+        const payload = {
+            job_id: jobId,
+            bucket: "canaisdarkora.firebasestorage.app",
+            aroll_path: arollStoragePath,
+            brolls_folder: `projetos/${jobId}/brolls/`,
+            nome_saida: `projetos/${jobId}/video_pronto_${jobId}.mp4`,
+            edit_list: state.timelineBrolls.map(tb => ({
+                start: tb.start,
+                duration: tb.duration,
+                mediaName: tb.mediaName
+            }))
+        };
 
-        // 4. Enviar a requisição para o servidor da Modal
         let endpoint = modalUrl;
-        if (!endpoint.endsWith('/render')) {
-            endpoint = endpoint.endsWith('/') ? `${endpoint}render` : `${endpoint}/render`;
+        if (!endpoint.endsWith('/render-async')) {
+            endpoint = endpoint.endsWith('/') ? `${endpoint}render-async` : `${endpoint}/render-async`;
         }
 
         const response = await fetch(endpoint, {
             method: 'POST',
-            body: formData
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
-            const errData = await response.json().catch(() => ({ detail: "Erro desconhecido no servidor Modal" }));
+            const errData = await response.json().catch(() => ({ detail: "Erro ao contatar servidor Modal" }));
             throw new Error(errData.detail || `Erro HTTP ${response.status}`);
         }
 
-        el.modalRenderStatus.textContent = "Processando FFmpeg na nuvem...";
-        el.modalBarFill.style.width = "75%";
+        // 5. Escutar as atualizações de progresso no Firestore
+        const unsubscribe = onSnapshot(doc(firebaseDb, 'render_jobs', jobId), async (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                const progress = data.progress;
+                const status = data.status;
 
-        // 5. Receber o arquivo de resposta
-        const videoBlob = await response.blob();
-        el.modalBarFill.style.width = "95%";
-        el.modalRenderStatus.textContent = "Fazendo download do vídeo...";
+                // Atualizar progresso vindo da nuvem (acima de 75%)
+                if (progress > 75 || progress === -1) {
+                    el.modalBarFill.style.width = `${progress === -1 ? 0 : progress}%`;
+                    el.modalRenderStatus.textContent = status;
+                }
 
-        // Iniciar download do arquivo
-        const downloadUrl = URL.createObjectURL(videoBlob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `video_final_brolls_${Date.now()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+                if (progress === 100) {
+                    unsubscribe();
+                    el.modalRenderStatus.textContent = "Baixando vídeo final...";
+                    
+                    try {
+                        const videoRef = ref(firebaseStorage, `projetos/${jobId}/video_pronto_${jobId}.mp4`);
+                        const url = await getDownloadURL(videoRef);
 
-        el.modalBarFill.style.width = "100%";
-        el.modalRenderStatus.textContent = "Renderização concluída!";
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `video_final_brolls_${Date.now()}.mp4`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
 
-        setTimeout(() => {
-            el.modalProgressWrapper.classList.add('hidden');
-            el.btnModalRender.disabled = false;
-        }, 3000);
+                        el.modalRenderStatus.textContent = "Renderização concluída!";
+                        setTimeout(() => {
+                            el.modalProgressWrapper.classList.add('hidden');
+                            el.btnModalRender.disabled = false;
+                        }, 4000);
+                    } catch (err) {
+                        console.error("Erro ao baixar o vídeo:", err);
+                        alert(`Erro ao resgatar download do vídeo final: ${err.message}`);
+                        el.btnModalRender.disabled = false;
+                    }
+                } else if (progress === -1) {
+                    unsubscribe();
+                    alert(`Falha no processamento do vídeo na nuvem: ${status}`);
+                    el.modalRenderStatus.textContent = "Falha na nuvem";
+                    el.btnModalRender.disabled = false;
+                }
+            }
+        });
 
     } catch (err) {
-        console.error("Erro na renderização Modal:", err);
-        alert(`Falha ao renderizar na nuvem: ${err.message}`);
+        console.error("Erro no fluxo da renderização:", err);
+        alert(`Falha ao renderizar: ${err.message}`);
         el.modalRenderStatus.textContent = "Falha no processo";
         el.modalBarFill.style.width = "0%";
         el.btnModalRender.disabled = false;
+        
+        // Registrar erro no Firestore se possível
+        try {
+            await setDoc(doc(firebaseDb, 'render_jobs', jobId), { 
+                status: `Falha no upload/trigger: ${err.message}`, 
+                progress: -1 
+            }, { merge: true });
+        } catch (e) {
+            console.error("Não foi possível registrar o erro no Firestore:", e);
+        }
     }
 }
 
