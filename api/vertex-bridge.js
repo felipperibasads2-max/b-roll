@@ -121,8 +121,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // Se não houver Authorization nos headers e tivermos a chave da conta de serviço configurada na Vercel
-    if (!fetchOptions.headers['authorization'] && process.env.GCP_SERVICE_ACCOUNT_KEY) {
+    // Apenas injetar o token da conta de serviço para chamadas da Vertex AI (aiplatform.googleapis.com)
+    if (!fetchOptions.headers['authorization'] && 
+        targetUrl.hostname.includes('aiplatform.googleapis.com') && 
+        process.env.GCP_SERVICE_ACCOUNT_KEY) {
       try {
         const token = await getAccessTokenFromServiceAccount(process.env.GCP_SERVICE_ACCOUNT_KEY);
         fetchOptions.headers['authorization'] = `Bearer ${token}`;
