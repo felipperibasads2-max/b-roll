@@ -1754,44 +1754,49 @@ Roteiro a ser analisado:
 "${text}"`;
 
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-        const response = await fetch(getProxyUrl(url), {
+        const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const isLocalhostTraditional = window.location.hostname === 'localhost' && window.location.port === '8000';
+        
+        const requestPayload = {
+            contents: [{
+                parts: [{
+                    text: promptText
+                }]
+            }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "object",
+                    properties: {
+                        sugestoes: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    tempo: { type: "number" },
+                                    palavra: { type: "string" },
+                                    categoria: { type: "string" },
+                                    contexto: { type: "string" },
+                                    sugestao: { type: "string" },
+                                    prompt: { type: "string" }
+                                },
+                                required: ["tempo", "palavra", "categoria", "contexto", "sugestao", "prompt"]
+                            }
+                        }
+                    },
+                    required: ["sugestoes"]
+                }
+            }
+        };
 
+        const fetchUrl = targetUrl;
+
+        const response = await fetch(fetchUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{
-                        text: promptText
-                    }]
-                }],
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "object",
-                        properties: {
-                            sugestoes: {
-                                type: "array",
-                                items: {
-                                    type: "object",
-                                    properties: {
-                                        tempo: { type: "number" },
-                                        palavra: { type: "string" },
-                                        categoria: { type: "string" },
-                                        contexto: { type: "string" },
-                                        sugestao: { type: "string" },
-                                        prompt: { type: "string" }
-                                    },
-                                    required: ["tempo", "palavra", "categoria", "contexto", "sugestao", "prompt"]
-                                }
-                            }
-                        },
-                        required: ["sugestoes"]
-                    }
-                }
-            })
+            body: JSON.stringify(requestPayload)
         });
 
         if (!response.ok) {
@@ -2053,13 +2058,24 @@ async function triggerGoogleFlowGeneration(prompt, time, word, buttonEl, isBatch
 
     // 3. Disparar Requisição
     return new Promise((resolve, reject) => {
-        fetch(getProxyUrl(flowUrl), {
+        const isLocalhostTraditional = window.location.hostname === 'localhost' && window.location.port === '8000';
+        let fetchUrl = flowUrl;
+        let requestPayload = payload;
+        if (isVertexAI && !isLocalhostTraditional) {
+            fetchUrl = '/api/vertex-bridge';
+            requestPayload = {
+                ...payload,
+                q: btoa(flowUrl)
+            };
+        }
+
+        fetch(fetchUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...headers
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(requestPayload)
         })
         .then(async res => {
             if (!res.ok) {
@@ -2199,13 +2215,24 @@ function startFlowPolling(blockId, taskId, keyword, buttonEl, resolve, reject, i
             headers = JSON.parse(localStorage.getItem('cfg_flow_headers') || '{}');
         } catch(e) {}
 
-        fetch(getProxyUrl(pollingUrl), {
+        const isLocalhostTraditional = window.location.hostname === 'localhost' && window.location.port === '8000';
+        let fetchUrl = pollingUrl;
+        let requestPayload = pollingBody ? JSON.parse(pollingBody) : {};
+        if (isVertexAI && !isLocalhostTraditional) {
+            fetchUrl = '/api/vertex-bridge';
+            requestPayload = {
+                ...requestPayload,
+                q: btoa(pollingUrl)
+            };
+        }
+
+        fetch(fetchUrl, {
             method: pollingMethod,
             headers: {
                 'Content-Type': 'application/json',
                 ...headers
             },
-            body: pollingBody
+            body: pollingMethod === 'POST' ? JSON.stringify(requestPayload) : pollingBody
         })
         .then(async res => {
             if (!res.ok) {
