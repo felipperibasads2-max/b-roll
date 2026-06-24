@@ -1591,7 +1591,7 @@ function getProxyUrl(url) {
     }
     // Codifica a URL em Base64 para evitar que firewalls locais bloqueiem o domínio do Google nos parâmetros
     const encodedUrl = btoa(url);
-    return `/api/vertex-proxy?q=${encodedUrl}`;
+    return `/api/vertex-bridge?q=${encodedUrl}`;
 }
 
 
